@@ -1,0 +1,5 @@
+# local weights (289 MB) — fetched from Hugging Face when absent
+/model/
+
+# local dev scratch
+/gpu-test.html

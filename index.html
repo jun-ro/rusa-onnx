@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rusa — in-browser rewriter (Q4 ONNX)</title>
+<style>
+  :root {
+    --bg: #0c0e12;
+    --panel: #14171e;
+    --panel-2: #1a1e27;
+    --border: #262c38;
+    --text: #e7eaf0;
+    --muted: #8b93a7;
+    --accent: #7dd3a7;
+    --accent-2: #6ea8fe;
+    --danger: #ff7b72;
+    --radius: 12px;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 600px at 15% -10%, #16202b 0%, transparent 60%),
+      radial-gradient(900px 500px at 110% 10%, #1b1a2b 0%, transparent 55%),
+      var(--bg);
+    color: var(--text);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(8px);
+    position: sticky;
+    top: 0;
+    background: rgba(12, 14, 18, .78);
+    z-index: 10;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand h1 { font-size: 17px; margin: 0; letter-spacing: .2px; font-weight: 650; }
+  .brand span { color: var(--muted); font-size: 12.5px; }
+  .spacer { flex: 1; }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .pill[data-state="loading"] .dot { background: #f2c94c; animation: pulse 1.1s infinite; }
+  .pill[data-state="ready"] .dot { background: var(--accent); }
+  .pill[data-state="busy"] .dot { background: var(--accent-2); animation: pulse 1.1s infinite; }
+  .pill[data-state="error"] .dot { background: var(--danger); }
+  @keyframes pulse { 50% { opacity: .25; } }
+
+  main {
+    flex: 1;
+    /* minmax(0,1fr) stops long unbroken model output from widening the grid */
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 18px;
+    padding: 18px 22px 8px;
+    align-items: stretch;
+  }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+
+  .card {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    min-height: 360px;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12.5px;
+    letter-spacing: .35px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .card-head .right { margin-left: auto; display: flex; gap: 8px; align-items: center; text-transform: none; letter-spacing: 0; }
+
+  textarea, .output {
+    flex: 1;
+    width: 100%;
+    resize: none;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--text);
+    font: 15px/1.65 ui-sans-serif, system-ui, sans-serif;
+    padding: 16px;
+    min-height: 240px;
+  }
+  .output { overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  .output:empty::before { content: attr(data-placeholder); color: #5d6577; }
+  .output .cursor { display: inline-block; width: 7px; height: 1.05em; background: var(--accent); vertical-align: -2px; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .foot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  button {
+    font: inherit;
+    font-size: 13px;
+    font-weight: 550;
+    color: var(--text);
+    background: #222836;
+    border: 1px solid #2f3748;
+    border-radius: 9px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: background .15s, border-color .15s, transform .05s;
+  }
+  button:hover:not(:disabled) { background: #2a3242; border-color: #3a4457; }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary {
+    background: linear-gradient(180deg, #2f8f68, #257a58);
+    border-color: #359c72;
+    color: #eafff5;
+  }
+  button.primary:hover:not(:disabled) { background: linear-gradient(180deg, #35a175, #2a8661); }
+  button.ghost { background: transparent; }
+  button.small { padding: 5px 10px; font-size: 12px; border-radius: 7px; }
+
+  select, input[type="number"] {
+    font: inherit;
+    font-size: 12.5px;
+    color: var(--text);
+    background: #1b202a;
+    border: 1px solid #2c3444;
+    border-radius: 7px;
+    padding: 5px 8px;
+  }
+  input[type="range"] { accent-color: var(--accent); width: 100%; }
+
+  /* settings strip */
+  .settings {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px 18px;
+    padding: 14px 22px;
+    border-top: 1px solid var(--border);
+    background: rgba(12, 14, 18, .5);
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .field label { font-size: 11.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+  .field .row { display: flex; align-items: center; gap: 8px; }
+  .field .val { font: 12px var(--mono); color: var(--muted); min-width: 34px; text-align: right; }
+
+  details.instruction { grid-column: 1 / -1; }
+  details.instruction summary {
+    cursor: pointer;
+    font-size: 12.5px;
+    color: var(--muted);
+    user-select: none;
+  }
+  details.instruction summary:hover { color: var(--text); }
+  details.instruction textarea {
+    margin-top: 10px;
+    min-height: 130px;
+    background: #10131a;
+    border: 1px solid #252b38;
+    border-radius: 9px;
+    font: 12.5px/1.6 var(--mono);
+    padding: 12px;
+  }
+
+  /* progress */
+  .progress-wrap { padding: 10px 22px 0; }
+  .progress-bar {
+    height: 5px;
+    background: #1b202a;
+    border-radius: 99px;
+    overflow: hidden;
+    border: 1px solid #232a37;
+  }
+  .progress-bar > i {
+    display: block;
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #4f9def, #7dd3a7);
+    transition: width .18s ease-out;
+  }
+  .progress-note {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font: 11.5px var(--mono);
+    color: var(--muted);
+    padding-top: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .progress-note span:first-child { overflow: hidden; text-overflow: ellipsis; }
+  .progress-note .right { display: flex; align-items: center; gap: 10px; flex: none; }
+
+  .log {
+    margin: 0 22px 18px;
+    padding: 0 12px;
+    max-height: 0;
+    overflow: auto;
+    border-radius: 9px;
+    background: #0f1218;
+    border: 1px solid transparent;
+    font: 11.5px/1.5 var(--mono);
+    color: var(--muted);
+    transition: max-height .2s, padding .2s;
+  }
+  .log.show { max-height: 160px; padding: 10px 12px; border-color: var(--border); }
+  .log .err { color: var(--danger); }
+  .log .ok { color: var(--accent); }
+  .foot .stat { font-family: var(--mono); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>Rusa</h1>
+    <span>350M rewriter · Q4 ONNX · runs local in your browser</span>
+  </div>
+  <div class="spacer"></div>
+  <span class="pill" id="status" data-state="idle"><span class="dot"></span><span id="statusText">idle</span></span>
+</header>
+
+<div class="progress-wrap">
+  <div class="progress-bar"><i id="bar"></i></div>
+  <div class="progress-note">
+    <span id="progressFile">waiting to load model…</span>
+    <span class="right">
+      <span id="progressPct"></span>
+      <button class="small" id="loadBtn" hidden>Load model · 289 MB</button>
+    </span>
+  </div>
+</div>
+
+<main>
+  <section class="card">
+    <div class="card-head">
+      <span>Draft</span>
+      <div class="right">
+        <button class="small ghost" id="sampleBtn" title="Paste a sample AI-sounding draft">Sample</button>
+        <button class="small ghost" id="clearDraftBtn" title="Clear draft">Clear</button>
+      </div>
+    </div>
+    <textarea id="draft" placeholder="Paste the text you want rewritten…" spellcheck="false"></textarea>
+    <div class="foot">
+      <span class="stat" id="wordCount">0 words</span>
+      <div class="spacer"></div>
+      <span>Ctrl / ⌘ + Enter to rewrite</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <span>Rewrite</span>
+      <div class="right">
+        <button class="small ghost" id="copyBtn" disabled>Copy</button>
+        <button class="small ghost" id="stopBtn" disabled>Stop</button>
+      </div>
+    </div>
+    <div class="output" id="output" data-placeholder="The rewritten text appears here, streamed token by token."></div>
+    <div class="foot">
+      <span class="stat" id="stats">—</span>
+      <div class="spacer"></div>
+      <button class="primary" id="runBtn" disabled>Rewrite</button>
+    </div>
+  </section>
+</main>
+
+<div class="settings">
+  <div class="field">
+    <label for="device">Backend</label>
+    <select id="device">
+      <option value="auto">Auto (real GPU, else CPU)</option>
+      <option value="webgpu">WebGPU</option>
+      <option value="wasm">CPU (WASM)</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="temp">Temperature <span class="val" id="tempVal">1.00</span></label>
+    <input type="range" id="temp" min="0.1" max="1.6" step="0.05" value="1" />
+  </div>
+  <div class="field">
+    <label for="topp">Top-p <span class="val" id="toppVal">0.95</span></label>
+    <input type="range" id="topp" min="0.1" max="1" step="0.01" value="0.95" />
+  </div>
+  <div class="field">
+    <label for="maxtok">Max new tokens</label>
+    <div class="row">
+      <input type="number" id="maxtok" min="32" max="1536" step="32" value="512" style="width:100%" />
+    </div>
+  </div>
+  <details class="instruction">
+    <summary>Instruction prompt (edit if you want a different rewriting style)</summary>
+    <textarea id="instruction" spellcheck="false">Rewrite the text below so it reads like a person wrote it, not a language model.
+
+Reorganize it as you see fit. Vary sentence length on purpose. Cut hedging,
+throat-clearing, and any sentence that only announces what comes next.
+Prefer the concrete word over the abstract one. It is fine to sound uneven.
+
+Every fact, number, unit, date, name and quotation must survive unchanged.</textarea>
+  </details>
+</div>
+
+<pre class="log" id="log"></pre>
+
+<script type="module">
+import {
+  env, pipeline, TextStreamer, InterruptableStoppingCriteria,
+} from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2/dist/transformers.min.js";
+
+/* ------------------------------------------------------------------ *
+ * Model location
+ * Two ways to get the weights, picked at runtime:
+ *   1. ./model/ next to this file (what the local setup uses)
+ *   2. the public Hugging Face repo, for static hosting (GitHub Pages)
+ *      where a 289 MB file cannot be committed.
+ * ------------------------------------------------------------------ */
+const HF_MODEL_ID = "jun-ai/Rusa";
+const LOCAL_MODEL_ID = "model";
+const DTYPE = "q4";
+
+env.useBrowserCache = true;      // 300 MB download is cached after the first run
+
+let source = { kind: "local", id: LOCAL_MODEL_ID };
+
+async function detectModelSource() {
+  try {
+    const res = await fetch("./model/config.json", { method: "HEAD", cache: "no-store" });
+    if (res.ok) return { kind: "local", id: LOCAL_MODEL_ID };
+  } catch { /* offline, file://, or not hosted */ }
+  return { kind: "hf", id: HF_MODEL_ID };
+}
+
+function applyEnvFor(s) {
+  if (s.kind === "local") {
+    env.allowRemoteModels = false;
+    env.allowLocalModels = true;
+    env.localModelPath = "./";
+  } else {
+    env.allowRemoteModels = true;
+    env.allowLocalModels = false;
+  }
+}
+
+const $ = (id) => document.getElementById(id);
+const els = {
+  status: $("status"), statusText: $("statusText"),
+  bar: $("bar"), progressFile: $("progressFile"), progressPct: $("progressPct"),
+  loadBtn: $("loadBtn"),
+  draft: $("draft"), output: $("output"), wordCount: $("wordCount"),
+  stats: $("stats"), runBtn: $("runBtn"), stopBtn: $("stopBtn"),
+  copyBtn: $("copyBtn"), sampleBtn: $("sampleBtn"), clearDraftBtn: $("clearDraftBtn"),
+  device: $("device"), temp: $("temp"), tempVal: $("tempVal"),
+  topp: $("topp"), toppVal: $("toppVal"), maxtok: $("maxtok"),
+  instruction: $("instruction"), log: $("log"),
+};
+
+/* ----------------------------- logging ---------------------------- */
+function log(msg, cls = "") {
+  els.log.classList.add("show");
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  els.log.appendChild(line);
+  els.log.scrollTop = els.log.scrollHeight;
+}
+
+function setStatus(state, text) {
+  els.status.dataset.state = state;
+  els.statusText.textContent = text;
+}
+
+/* ----------------------------- model ------------------------------ */
+let generator = null;
+let loadedDevice = null;
+let loadingPromise = null;
+
+/**
+ * WebGPU can be present but backed by a software rasteriser (SwiftShader in
+ * Chrome, llvmpipe elsewhere). On software adapters a 350M model crawls while
+ * pinning every CPU core, so "auto" only picks WebGPU for real hardware.
+ */
+async function describeAdapter() {
+  if (!("gpu" in navigator)) return { usable: false, name: "no WebGPU" };
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) return { usable: false, name: "no adapter" };
+    const info = adapter.info ?? {};
+    const name = [info.vendor, info.architecture, info.description]
+      .filter(Boolean).join(" / ") || "unknown adapter";
+    const software = /swiftshader|llvmpipe|softwarerasterizer|software/i.test(name);
+    return { usable: !software, name };
+  } catch (err) {
+    return { usable: false, name: `adapter error: ${err?.message ?? err}` };
+  }
+}
+
+async function pickDevice() {
+  const choice = els.device.value;
+  if (choice === "webgpu") {
+    const adapter = await describeAdapter();
+    log(adapter.usable
+      ? `WebGPU adapter: ${adapter.name}`
+      : `WebGPU adapter: ${adapter.name} — software rasteriser, expect ~100x slowdown.`, adapter.usable ? "" : "err");
+    return "webgpu";
+  }
+  if (choice === "wasm") return "wasm";
+
+  const adapter = await describeAdapter();
+  if (adapter.usable) {
+    log(`WebGPU adapter: ${adapter.name}`);
+    return "webgpu";
+  }
+  log(`WebGPU unavailable or software-only (${adapter.name}) — using CPU/WASM.`);
+  return "wasm";
+}
+
+/**
+ * Transformers.js 4.x picks the "asyncify" WASM build by default (it exists for
+ * the WebGPU EP). That build has no CPU kernel for GatherBlockQuantized, which
+ * every 4-bit export uses for its embedding table. The plain build does, so
+ * point ORT at it whenever we run on CPU.
+ */
+function usePlainWasmBuild() {
+  const ort = env.backends.onnx;
+  const dist = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.versions.web}/dist/`;
+  ort.wasm.wasmPaths = {
+    mjs: `${dist}ort-wasm-simd-threaded.mjs`,
+    wasm: `${dist}ort-wasm-simd-threaded.wasm`,
+  };
+  log(`Using plain WASM runtime (${ort.versions.web}).`);
+}
+
+// Aggregate fetch progress across tokenizer + graph + external weights.
+const fetched = new Map();
+const TOTAL_BYTES = 308 * 1048576; // tokenizer ~5 MB + graph 0.2 MB + weights 289 MB
+
+function onProgress(info) {
+  if (!info) return;
+  if (info.status === "progress" && info.total) {
+    fetched.set(info.file, info.loaded);
+    const loaded = [...fetched.values()].reduce((a, b) => a + b, 0);
+    const pct = Math.min(100, (loaded / TOTAL_BYTES) * 100);
+    els.bar.style.width = `${pct.toFixed(2)}%`;
+    els.progressFile.textContent = `fetching ${info.file}`;
+    els.progressPct.textContent = `${pct.toFixed(0)}% — ${(loaded / 1048576).toFixed(0)} / ${(TOTAL_BYTES / 1048576).toFixed(0)} MB`;
+  } else if (info.status === "done" && info.file) {
+    els.progressFile.textContent = `ready: ${info.file}`;
+  } else if (info.status === "ready") {
+    els.progressFile.textContent = "model ready";
+  }
+}
+
+async function loadModel() {
+  if (generator) return generator;
+  if (loadingPromise) return loadingPromise;
+
+  loadingPromise = (async () => {
+    let device = await pickDevice();
+    if (device === "wasm") usePlainWasmBuild();
+    source = await detectModelSource();
+    applyEnvFor(source);
+    setStatus("loading", `loading model (${device})`);
+    els.progressFile.textContent = "starting…";
+    const where = source.kind === "local" ? "./model/ (local)" : `${source.id} (Hugging Face)`;
+    log(`Loading ${source.id} (q4, ${device}) from ${where}`);
+
+    try {
+      generator = await pipeline("text-generation", source.id, {
+        dtype: DTYPE,
+        device,
+        progress_callback: onProgress,
+      });
+    } catch (err) {
+      if (device === "webgpu") {
+        log(`WebGPU failed: ${err?.message ?? err}`, "err");
+        log("Switching to CPU (WASM) and reloading — the ORT runtime initialises once per page.", "");
+        try { localStorage.setItem("rusa.device", "wasm"); } catch { /* private mode */ }
+        setStatus("error", "reloading on CPU");
+        setTimeout(() => location.reload(), 900);
+        return new Promise(() => {}); // page is going away
+      }
+      throw err;
+    }
+
+    loadedDevice = device;
+    setStatus("ready", device === "webgpu" ? "ready · WebGPU" : "ready · CPU (WASM)");
+    els.bar.style.width = "100%";
+    els.progressPct.textContent = "100%";
+    els.runBtn.disabled = false;
+    log(`Model loaded on ${device === "webgpu" ? "WebGPU" : "WASM (CPU)"}.`, "ok");
+    return generator;
+  })();
+
+  try {
+    return await loadingPromise;
+  } finally {
+    loadingPromise = null;
+  }
+}
+
+/* --------------------------- generation --------------------------- */
+let stopping = null;
+let running = false;
+
+function buildPrompt() {
+  const instruction = els.instruction.value.trim();
+  const draft = els.draft.value.trim();
+  return `${instruction}\n\n${draft}\n\n### Rewritten:\n\n`;
+}
+
+function setOutput(text, streaming = false) {
+  els.output.textContent = text;
+  if (streaming) {
+    const cursor = document.createElement("span");
+    cursor.className = "cursor";
+    els.output.appendChild(cursor);
+  }
+  els.output.scrollTop = els.output.scrollHeight;
+}
+
+async function rewrite() {
+  if (running) return;
+  const draft = els.draft.value.trim();
+  if (!draft) {
+    els.draft.focus();
+    return;
+  }
+
+  running = true;
+  els.runBtn.disabled = true;
+  els.copyBtn.disabled = true;
+  els.stopBtn.disabled = false;
+  setStatus("busy", "generating…");
+  els.stats.textContent = "warming up…";
+  setOutput("", true);
+
+  try {
+    const pipe = await loadModel();
+    const prompt = buildPrompt();
+    const maxNew = Math.max(32, Math.min(1536, Number(els.maxtok.value) || 512));
+    const temperature = Number(els.temp.value);
+    const topP = Number(els.topp.value);
+
+    stopping = new InterruptableStoppingCriteria();
+
+    let streamed = "";
+    let tokens = 0;
+    let tFirst = 0;
+    let tLast = 0;
+
+    const streamer = new TextStreamer(pipe.tokenizer, {
+      skip_prompt: true,
+      skip_special_tokens: true,
+      callback_function: (chunk) => {
+        streamed += chunk;
+        setOutput(streamed, true);
+        els.output.scrollTop = els.output.scrollHeight;
+      },
+      token_callback_function: () => {
+        const now = performance.now();
+        if (!tFirst) tFirst = now;
+        tLast = now;
+        tokens++;
+        if (tokens % 4 === 0 || tokens === 1) {
+          const secs = (now - tFirst) / 1000;
+          const tps = secs > 0 ? (tokens / secs) : 0;
+          els.stats.textContent = `${tokens} tokens · ${tps.toFixed(1)} tok/s`;
+        }
+      },
+    });
+
+    const started = performance.now();
+    const out = await pipe(prompt, {
+      max_new_tokens: maxNew,
+      do_sample: temperature > 0,
+      temperature,
+      top_p: topP,
+      top_k: 0,
+      repetition_penalty: 1.0,
+      return_full_text: false,
+      streamer,
+      stopping_criteria: [stopping],
+    });
+
+    const text = out?.[0]?.generated_text ?? streamed;
+    setOutput(text, false);
+    els.copyBtn.disabled = !text.trim();
+
+    const secs = (performance.now() - started) / 1000;
+    const tps = tokens > 0 && tLast > tFirst ? (tokens / ((tLast - tFirst) / 1000)) : 0;
+    els.stats.textContent = `${tokens} tokens · ${tps.toFixed(1)} tok/s · ${secs.toFixed(2)} s`;
+    log(`Done: ${tokens} tokens in ${secs.toFixed(2)} s${stopping.interrupted ? " (stopped early)" : ""}.`, "ok");
+  } catch (err) {
+    console.error(err);
+    setStatus("error", "error");
+    log(String(err?.message ?? err), "err");
+    els.stats.textContent = "error — see log";
+    if (!els.output.textContent) setOutput("", false);
+  } finally {
+    running = false;
+    stopping = null;
+    els.runBtn.disabled = !generator;
+    els.stopBtn.disabled = true;
+    if (els.status.dataset.state === "busy") {
+      setStatus("ready", loadedDevice === "webgpu" ? "ready · WebGPU" : "ready · CPU (WASM)");
+    }
+  }
+}
+
+/* ----------------------------- wiring ----------------------------- */
+els.temp.addEventListener("input", () => { els.tempVal.textContent = Number(els.temp.value).toFixed(2); });
+els.topp.addEventListener("input", () => { els.toppVal.textContent = Number(els.topp.value).toFixed(2); });
+
+els.draft.addEventListener("input", () => {
+  const words = els.draft.value.trim().split(/\s+/).filter(Boolean).length;
+  els.wordCount.textContent = `${words} word${words === 1 ? "" : "s"}`;
+});
+
+els.draft.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
+    rewrite();
+  }
+});
+
+els.runBtn.addEventListener("click", rewrite);
+
+els.stopBtn.addEventListener("click", () => {
+  stopping?.interrupt();
+  els.stopBtn.disabled = true;
+  els.stats.textContent = "stopping…";
+});
+
+els.copyBtn.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(els.output.textContent);
+    els.copyBtn.textContent = "Copied";
+    setTimeout(() => { els.copyBtn.textContent = "Copy"; }, 1200);
+  } catch { log("Clipboard blocked by the browser.", "err"); }
+});
+
+els.clearDraftBtn.addEventListener("click", () => {
+  els.draft.value = "";
+  els.draft.dispatchEvent(new Event("input"));
+  els.draft.focus();
+});
+
+els.sampleBtn.addEventListener("click", () => {
+  els.draft.value =
+`In today's fast-paced world, effective time management is more important than ever. It is not merely about completing tasks; it is about ensuring that the right tasks are completed at the right time. By leveraging proven strategies such as prioritization, delegation, and the strategic use of technology, individuals can unlock their full potential and achieve a healthy work-life balance. Ultimately, mastering time management is a journey, not a destination, and it is one that pays dividends in every aspect of life.`;
+  els.draft.dispatchEvent(new Event("input"));
+});
+
+els.device.addEventListener("change", () => {
+  try { localStorage.setItem("rusa.device", els.device.value); } catch { /* private mode */ }
+  // ORT's WASM runtime is initialised once per page, so switching backends
+  // means starting over with a fresh page.
+  location.reload();
+});
+
+try {
+  const saved = localStorage.getItem("rusa.device");
+  if (saved) els.device.value = saved;
+} catch { /* private mode */ }
+
+function loadFailed(err) {
+  console.error(err);
+  setStatus("error", "load failed");
+  els.progressFile.textContent = "failed to load model — see log below";
+  log(String(err?.message ?? err), "err");
+  log("If this is the local copy, serve it over http (./start.sh) rather than opening the file directly.", "err");
+}
+
+// A hosted copy pulls ~289 MB from Hugging Face, so ask first instead of
+// hammering a visitor's connection on page open. Locally, just load it.
+(async () => {
+  source = await detectModelSource();
+  applyEnvFor(source);
+
+  if (source.kind === "local") {
+    els.progressFile.textContent = "loading local model…";
+    loadModel().catch(loadFailed);
+    return;
+  }
+
+  els.progressFile.textContent = "weights are fetched from Hugging Face (cached afterwards)";
+  els.loadBtn.hidden = false;
+  els.loadBtn.addEventListener("click", () => {
+    els.loadBtn.hidden = true;
+    els.loadBtn.disabled = true;
+    loadModel().catch(loadFailed);
+  });
+})();
+</script>
+</body>
+</html>
