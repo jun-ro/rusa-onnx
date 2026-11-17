@@ -88,6 +88,11 @@ flatpak run com.brave.Browser --enable-features=Vulkan
 
 The page then reports `adapter: intel | gen-11` and runs on the GPU.
 
+Note that on some drivers (Intel Gen11 / Jasper Lake included) Chromium's
+Vulkan path also breaks **video playback** — frames decode but the surface
+stays white. Keep the flag out of your everyday browser and use a separate
+launcher/profile for WebGPU demos.
+
 ### Why the CPU path needs a runtime override
 
 4-bit exports keep the embedding table in `GatherBlockQuantized`, an ONNX
